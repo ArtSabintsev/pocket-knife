@@ -138,7 +138,7 @@ def add_services(
     # Validate network and set node URL and chain ID
     network_config = {
         "main": {
-            "node_url": "https://shannon-grove-rpc.mainnet.poktroll.com",
+            "node_url": "https://sauron-rpc.infra.pocket.network",
             "chain_id": "pocket"
         },
         "beta": {
@@ -2006,7 +2006,7 @@ def treasury(
         validator_table = Table(title="Validator Stake Balance Report")
         validator_table.add_column("Address", style="cyan", no_wrap=True)
         validator_table.add_column("Liquid (POKT)", justify="right", style="green")
-        validator_table.add_column("Staked (POKT)", justify="right", style="blue")
+        validator_table.add_column("Self-Stake (POKT)", justify="right", style="blue")
         validator_table.add_column("Commission (POKT)", justify="right", style="magenta")
         validator_table.add_column("Total (POKT)", justify="right", style="bold white")
         validator_table.add_column("Status", justify="center")
@@ -2210,7 +2210,7 @@ def get_node_stake_balance(address: str) -> tuple[float, float, bool, str]:
     # Get staked balance
     cmd = [
         "pocketd", "query", "supplier", "show-supplier", address,
-        "--node", "https://shannon-grove-rpc.mainnet.poktroll.com",
+        "--node", "https://sauron-rpc.infra.pocket.network",
         "--output", "json"
     ]
     
@@ -2269,7 +2269,7 @@ def get_app_stake_balance(address: str) -> tuple[float, float, bool, str]:
     # Get staked balance
     cmd = [
         "pocketd", "query", "application", "show-application", address,
-        "--node", "https://shannon-grove-rpc.mainnet.poktroll.com",
+        "--node", "https://sauron-rpc.infra.pocket.network",
         "--output", "json"
     ]
     
@@ -2324,7 +2324,7 @@ def get_liquid_balance(address: str) -> tuple[float, bool, str]:
     """
     cmd = [
         "pocketd", "query", "bank", "balances", address,
-        "--node", "https://shannon-grove-rpc.mainnet.poktroll.com",
+        "--node", "https://sauron-rpc.infra.pocket.network",
         "--output", "json"
     ]
     
@@ -2391,7 +2391,7 @@ def get_delegator_rewards(account_address: str) -> tuple[float, bool, str]:
     """
     cmd = [
         "pocketd", "query", "distribution", "rewards", account_address,
-        "--node", "https://shannon-grove-rpc.mainnet.poktroll.com",
+        "--node", "https://sauron-rpc.infra.pocket.network",
         "--output", "json"
     ]
     
@@ -2439,7 +2439,7 @@ def get_delegated_amount(account_address: str) -> tuple[float, bool, str]:
     """
     cmd = [
         "pocketd", "query", "staking", "delegations", account_address,
-        "--node", "https://shannon-grove-rpc.mainnet.poktroll.com",
+        "--node", "https://sauron-rpc.infra.pocket.network",
         "--output", "json"
     ]
 
@@ -2508,7 +2508,7 @@ def get_validator_commission(validator_operator_address: str) -> tuple[float, bo
     """
     cmd = [
         "pocketd", "query", "distribution", "commission", validator_operator_address,
-        "--node", "https://shannon-grove-rpc.mainnet.poktroll.com",
+        "--node", "https://sauron-rpc.infra.pocket.network",
         "--output", "json"
     ]
     
@@ -2556,7 +2556,10 @@ def get_validator_commission(validator_operator_address: str) -> tuple[float, bo
 def get_validator_stake_balance(address: str) -> tuple[float, float, float, bool, str]:
     """
     Get validator stake balance and commission for a single address.
-    Returns (liquid_balance, staked_balance, validator_commission, success, error_message)
+    Returns (liquid_balance, self_delegation, validator_commission, success, error_message)
+
+    Note: This queries the validator's SELF-DELEGATION (their own stake), not total tokens
+    bonded to the validator. This prevents double-counting when delegators are tracked separately.
     """
     # First convert validator operator address to account address
     account_address, addr_success, addr_error = get_validator_account_address(address)
@@ -2569,32 +2572,38 @@ def get_validator_stake_balance(address: str) -> tuple[float, float, float, bool
 
     # Get validator commission using the original validator operator address
     validator_commission, commission_success, commission_error = get_validator_commission(address)
-    
-    # Get validator stake balance using the original operator address
+
+    # Get validator's SELF-DELEGATION (not total tokens) to avoid double-counting
+    # Query the delegation from the validator's account address to their operator address
     cmd = [
-        "pocketd", "query", "staking", "validator", address,
-        "--node", "https://shannon-grove-rpc.mainnet.poktroll.com",
+        "pocketd", "query", "staking", "delegation", account_address, address,
+        "--node", "https://sauron-rpc.infra.pocket.network",
         "--output", "json"
     ]
-    
+
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         if result.returncode != 0:
             # Return what we have even if staking query fails
             success = liquid_success or commission_success
-            return liquid_balance, 0.0, validator_commission, success, "No validator stake found"
+            return liquid_balance, 0.0, validator_commission, success, "No self-delegation found"
 
         data = json.loads(result.stdout)
-        validator = data.get("validator", {})
-        tokens = validator.get("tokens", "0")
+        delegation_response = data.get("delegation_response", {})
+        balance = delegation_response.get("balance", {})
 
-        if not tokens or tokens == "0":
+        if balance.get("denom") != "upokt":
+            success = liquid_success or commission_success
+            return liquid_balance, 0.0, validator_commission, success, "No self-delegation found"
+
+        amount_str = balance.get("amount", "0")
+        if not amount_str or amount_str == "0":
             # Return what we have even if no stake
             success = liquid_success or commission_success
-            return liquid_balance, 0.0, validator_commission, success, "No validator stake found"
+            return liquid_balance, 0.0, validator_commission, success, "No self-delegation found"
 
         # Convert from upokt to pokt (divide by 1,000,000)
-        upokt_staked = int(tokens)
+        upokt_staked = int(amount_str)
         pokt_staked = upokt_staked / 1_000_000
 
         # Return success if any balance exists
@@ -2605,13 +2614,13 @@ def get_validator_stake_balance(address: str) -> tuple[float, float, float, bool
 
     except subprocess.TimeoutExpired:
         success = liquid_success or commission_success
-        return liquid_balance, 0.0, validator_commission, success, "Validator stake query timeout"
+        return liquid_balance, 0.0, validator_commission, success, "Validator self-delegation query timeout"
     except json.JSONDecodeError:
         success = liquid_success or commission_success
-        return liquid_balance, 0.0, validator_commission, success, "Invalid validator stake JSON response"
+        return liquid_balance, 0.0, validator_commission, success, "Invalid validator self-delegation JSON response"
     except Exception as e:
         success = liquid_success or commission_success
-        return liquid_balance, 0.0, validator_commission, success, f"Validator stake error: {str(e)}"
+        return liquid_balance, 0.0, validator_commission, success, f"Validator self-delegation error: {str(e)}"
 
 
 def query_liquid_balances_parallel(addresses: list[str], max_workers: int = 10) -> dict:
@@ -3158,7 +3167,7 @@ def validator_stakes(
     if addresses_file is None:
         console.print("[red]Error: Missing required option '--file'[/red]\n")
         console.print("[bold]Validator Stakes Command Help:[/bold]")
-        console.print("Calculate validator stake balances (liquid + staked + commission) for addresses listed in a file.\n")
+        console.print("Calculate validator stake balances (liquid + self-stake + commission) for addresses listed in a file.\n")
         console.print("[bold]Required Options:[/bold]")
         console.print("  [cyan]--file[/cyan]  Path to file with addresses, one per line")
         console.print("\n[bold]Example:[/bold]")
@@ -3182,7 +3191,7 @@ def validator_stakes(
     table = Table(title="Validator Stake Balance Report")
     table.add_column("Address", style="cyan", no_wrap=True)
     table.add_column("Liquid (POKT)", justify="right", style="green")
-    table.add_column("Staked (POKT)", justify="right", style="blue")
+    table.add_column("Self-Stake (POKT)", justify="right", style="blue")
     table.add_column("Commission (POKT)", justify="right", style="magenta")
     table.add_column("Total (POKT)", justify="right", style="bold white")
     table.add_column("Status", justify="center")
@@ -3488,7 +3497,7 @@ def fetch_suppliers_for_owner(owner_address: str) -> list[str]:
     cmd = [
         "pocketd", "q", "supplier", "list-suppliers",
         "--owner-address", owner_address,
-        "--node", "https://shannon-grove-rpc.mainnet.poktroll.com",
+        "--node", "https://sauron-rpc.infra.pocket.network",
         "--grpc-insecure=false",
         "-o", "json",
         "--page-limit=100000",

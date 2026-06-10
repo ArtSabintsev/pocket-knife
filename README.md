@@ -49,17 +49,19 @@ make install
 ### Manual Installation
 
 ```bash
-# Prerequisites: Python 3.8+, pocketd CLI
+# Prerequisites: Python 3.8+, pipx, pocketd CLI
 
-# Clone repository
+# Install pipx if you don't have it
+brew install pipx  # macOS
+# or: pip install pipx
+
+# Clone and install
 git clone https://github.com/buildwithgrove/pocket-knife.git
 cd pocket-knife
-
-# Install with pipx (recommended)
 pipx install .
 
 # Or install in development mode
-pip install -e .
+pipx install -e .
 ```
 
 ## Keyring Backends
@@ -70,38 +72,6 @@ The `os` backend is used by default. For testing and development, you can use ot
 # Example: Using test backend (no password required)
 pocketknife generate-keys 5 myapp 0 --keyring-backend test
 pocketknife export-keys mykey --keyring-backend test
-```
-
-## Common Usage Patterns
-
-### Generate and Export Keys
-```bash
-# Generate keys (test keyring - no password)
-pocketknife generate-keys 10 grove-app 0 --keyring-backend test
-
-# Export for backup
-pocketknife export-keys --file keynames.txt --keyring-backend test
-```
-
-### Import and Use Keys
-```bash
-# Import from backup
-pocketknife import-keys --file backup.txt -t recover --keyring-backend os --pwd YOUR_PASSWORD
-
-# Stake applications
-pocketknife stake-apps pokt1abc... 1000000 anvil --keyring-backend os --pwd YOUR_PASSWORD
-```
-
-### Manage Keys
-```bash
-# List keys
-pocketd keys list --keyring-backend test
-
-# Delete test keys by pattern
-pocketknife delete-keys --keyring test --pattern grove-app --pwd 12345678
-
-# Clean up all test keys
-pocketknife delete-keys --keyring test --pwd 12345678
 ```
 
 ## Configuration
